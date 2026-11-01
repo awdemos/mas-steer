@@ -30,7 +30,7 @@ anyhow = "1.0"
 toml = "0.8"
 
 # optional ML backend (disabled by default to keep compile fast)
-candle-core = "0.8"
+candle-core = "0.11"
 
 # dev
 proptest = "1.5"
