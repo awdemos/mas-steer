@@ -19,3 +19,14 @@ fn score_fitness_degrades_with_strength() {
     let s = Score::from_components(1.0, 10.0, 0.0, &config);
     assert!(s.fitness < 1.0);
 }
+
+#[test]
+fn damage_budget_penalizes_large_control_degradation() {
+    let config = FitnessConfig {
+        max_damage_budget: 0.1,
+        ..FitnessConfig::default()
+    };
+    let within = Score::from_components(1.0, 0.0, 0.05, &config);
+    let over = Score::from_components(1.0, 0.0, 0.5, &config);
+    assert!(over.fitness < within.fitness);
+}

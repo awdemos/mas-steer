@@ -10,6 +10,9 @@ pub struct FitnessConfig {
     pub lambda_str: f32,
     /// Penalty on control-task degradation.
     pub lambda_ctrl: f32,
+    /// Maximum allowed per-token KL-divergence-like damage budget.
+    /// A value of 0.0 disables the budget check.
+    pub max_damage_budget: f32,
 }
 
 impl Default for FitnessConfig {
@@ -17,6 +20,7 @@ impl Default for FitnessConfig {
         Self {
             lambda_str: 0.01,
             lambda_ctrl: 0.5,
+            max_damage_budget: 0.0,
         }
     }
 }
@@ -38,9 +42,12 @@ impl Score {
         control_penalty: f32,
         config: &FitnessConfig,
     ) -> Self {
-        let fitness = task_success
+        let mut fitness = task_success
             - config.lambda_str * strength_penalty
             - config.lambda_ctrl * control_penalty;
+        if config.max_damage_budget > 0.0 && control_penalty > config.max_damage_budget {
+            fitness -= (control_penalty - config.max_damage_budget) * 10.0;
+        }
         Self {
             task_success,
             strength_penalty,

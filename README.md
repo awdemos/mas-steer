@@ -23,7 +23,8 @@ the winners as replayable JSON artifacts.
 cargo build --workspace --release
 ```
 
-The default build uses a fast mock backend. To enable the optional Candle
+The default build uses a fast mock backend. The optional Candle integration
+is disabled by default; enable it only when you are ready to wire in a real model. To enable the optional Candle
 integration, build with `--features candle` on `steer-core` and the CLI.
 
 ## Run a search
@@ -32,7 +33,22 @@ integration, build with `--features candle` on `steer-core` and the CLI.
 cargo run --bin mas_steer -- search \
   --layers 6 --hidden-dim 32 --mlp-dim 64 --vocab-size 128 \
   --generations 10 --population 20 \
+  --checkpoint-dir checkpoints \
   --output champion.json
+```
+
+Use a config file to set search hyperparameters and the optional damage budget:
+
+```bash
+cargo run --bin mas_steer -- search --config examples/config.toml
+```
+
+## Resume a search
+
+```bash
+cargo run --bin mas_steer -- resume \
+  --checkpoint checkpoints/checkpoint-0008.json \
+  --generations 10 --output champion.json
 ```
 
 ## Evaluate a saved champion

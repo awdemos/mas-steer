@@ -26,6 +26,10 @@ pub struct SearchConfig {
     pub max_interventions: usize,
     pub dose_range: (f32, f32),
     pub fitness: FitnessConfig,
+    /// If set, write a checkpoint JSON to this directory after each generation.
+    pub checkpoint_dir: Option<String>,
+    /// Write a checkpoint every N generations (default 1).
+    pub checkpoint_every: usize,
 }
 
 impl Default for SearchConfig {
@@ -39,6 +43,8 @@ impl Default for SearchConfig {
             max_interventions: 4,
             dose_range: (-5.0, 5.0),
             fitness: FitnessConfig::default(),
+            checkpoint_dir: None,
+            checkpoint_every: 1,
         }
     }
 }
@@ -49,6 +55,43 @@ pub struct SearchResult {
     pub champion: Champion,
     pub history: Vec<Score>,
     pub config: SearchConfig,
+}
+
+/// Per-generation checkpoint, enough to resume or replay a search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Checkpoint {
+    pub generation: usize,
+    pub population: Vec<Candidate>,
+    pub scored: Vec<(Candidate, Score)>,
+    pub champion: Champion,
+}
+
+fn maybe_write_checkpoint(
+    dir: &str,
+    generation: usize,
+    population: &[Candidate],
+    scored: &[(Candidate, Score)],
+    champion: &Champion,
+) -> steer_core::Result<()> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    let path = PathBuf::from(dir);
+    if !path.exists() {
+        fs::create_dir_all(&path).map_err(|e| {
+            SteerError::InvalidConfig(format!("cannot create checkpoint directory: {e}"))
+        })?;
+    }
+    let file = path.join(format!("checkpoint-{generation:04}.json"));
+    let checkpoint = Checkpoint {
+        generation,
+        population: population.to_vec(),
+        scored: scored.to_vec(),
+        champion: champion.clone(),
+    };
+    let json = serde_json::to_string_pretty(&checkpoint)?;
+    fs::write(&file, json)
+        .map_err(|e| SteerError::InvalidConfig(format!("cannot write checkpoint: {e}")))
 }
 
 /// Evaluate one candidate on the current task and control sets.
@@ -153,6 +196,11 @@ fn validate_config(config: &SearchConfig) -> steer_core::Result<()> {
             "dose_range lower bound must not exceed upper bound".to_string(),
         ));
     }
+    if config.checkpoint_every == 0 {
+        return Err(SteerError::InvalidConfig(
+            "checkpoint_every must be > 0".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -187,17 +235,70 @@ pub fn run_search(
     let controls = challenger.generate_tasks(control_count, &mut rng);
 
     // Initialize population.
-    let mut population: Vec<Candidate> = (0..config.population_size)
+    let population: Vec<Candidate> = (0..config.population_size)
         .map(|_| {
             let ivs = random_candidate(&bounds, &mut rng);
             Candidate { interventions: ivs }.deduped()
         })
         .collect();
 
-    let mut champion: Option<Champion> = None;
+    run_search_inner(backend, config, seed, tasks, controls, population, 0, None)
+}
+
+/// Resume a search from a saved checkpoint.
+pub fn resume_search(
+    backend: Arc<dyn Backend>,
+    config: SearchConfig,
+    checkpoint: Checkpoint,
+    seed: u64,
+) -> Result<SearchResult, SteerError> {
+    validate_config(&config)?;
+
+    // Regenerate tasks using the same seed so the benchmark is consistent.
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let challenger = Challenger::new();
+    let task_count = config.population_size.max(8);
+    let control_count = config.population_size.max(4) / 2;
+    let tasks = challenger.generate_tasks(task_count, &mut rng);
+    let controls = challenger.generate_tasks(control_count, &mut rng);
+
+    run_search_inner(
+        backend,
+        config,
+        seed,
+        tasks,
+        controls,
+        checkpoint.population,
+        checkpoint.generation,
+        Some(checkpoint.champion),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_search_inner(
+    backend: Arc<dyn Backend>,
+    config: SearchConfig,
+    seed: u64,
+    tasks: Vec<TaskInstance>,
+    controls: Vec<TaskInstance>,
+    mut population: Vec<Candidate>,
+    start_generation: usize,
+    initial_champion: Option<Champion>,
+) -> Result<SearchResult, SteerError> {
+    let dims = backend.dims();
+    let bounds = MutationBounds {
+        layers: dims.layers,
+        hidden_dim: dims.hidden_dim,
+        mlp_dim: dims.mlp_dim,
+        max_interventions: config.max_interventions,
+        dose_range: config.dose_range,
+    };
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut champion: Option<Champion> = initial_champion;
     let mut history = Vec::with_capacity(config.generations);
 
-    for generation in 0..config.generations {
+    for generation in start_generation..(start_generation + config.generations) {
         info!("search generation {}", generation);
 
         // Evaluate population in parallel.
@@ -231,6 +332,14 @@ pub fn run_search(
                 generation,
                 fitness: best.1.fitness,
             });
+        }
+
+        if let Some(ref dir) = config.checkpoint_dir {
+            if generation % config.checkpoint_every == 0 {
+                if let Some(ref champ) = champion {
+                    maybe_write_checkpoint(dir, generation, &population, &ranked, champ)?;
+                }
+            }
         }
 
         // Build next generation.

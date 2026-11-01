@@ -50,6 +50,8 @@ for the algorithmic test suite.
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features
 cargo test --workspace --all-features
+cargo audit
+cargo deny check
 ```
 
 Run integration-style smoke tests:

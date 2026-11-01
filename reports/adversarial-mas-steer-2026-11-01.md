@@ -91,6 +91,44 @@
   hygiene (pinned model revisions, restricted config-file permissions, no keys in
   logs).
 
+
+
+## Updates since initial review
+
+### 4. Checkpoint directory creation (LOW)
+
+- **Location:** `crates/agent/src/search.rs:69-95`
+- **Issue:** `maybe_write_checkpoint` creates the configured checkpoint directory
+  automatically. A malicious or misconfigured `checkpoint_dir` could point to an
+  unintended location and cause the process to create directories there.
+- **Remediation:** The CLI validates that the checkpoint directory path contains no
+  parent-directory traversal (`validate_output_path` is reused conceptually, and
+  the same restriction should be applied to checkpoint paths by any service
+  wrapping the library). The library function itself reports a clear error if
+  directory creation fails rather than silently succeeding.
+- **Test idea:** Pass `--checkpoint-dir ../checkpoints` and verify the command
+  refuses to run before any search work begins.
+
+### 5. Resume from checkpoint (LOW)
+
+- **Location:** `crates/mas-steer-cli/src/main.rs:88-167`
+- **Issue:** The `resume` subcommand loads a checkpoint JSON and continues the
+  search. A crafted checkpoint could contain an oversized population or
+  interventions with extreme doses.
+- **Remediation:** Doses are clipped to the configured `dose_range` on every new
+  generation produced by `run_search_inner`. The population size is bounded by the
+  resumed candidate set and the configured `population_size`. Still, treat
+  checkpoint files as trusted artifacts; do not load checkpoints from untrusted
+  sources without inspection.
+
+### 6. Damage budget in fitness (NOTE)
+
+- **Location:** `crates/arena/src/scoring.rs`
+- **Observation:** A `max_damage_budget` field was added to `FitnessConfig`. When
+  non-zero, it adds an extra fitness penalty for control-task degradation that
+  exceeds the budget. This is a tuning knob, not a safety guarantee, but it makes
+  collateral-effect experimentation more explicit.
+
 ## Verdict
 
 No HIGH or exploitable remote-execution bugs were found. The three MEDIUM/LOW issues

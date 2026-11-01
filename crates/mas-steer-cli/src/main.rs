@@ -9,7 +9,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use tracing::info;
 
-use agent::{run_search, SearchConfig};
+use agent::{run_search, Checkpoint, SearchConfig};
 use steer_core::{MockBackend, ModelDims};
 
 const MAX_PROMPT_FILE_BYTES: u64 = 1_048_576;
@@ -60,6 +60,30 @@ enum Commands {
         /// Output JSON path for the champion.
         #[arg(short, long, default_value = "champion.json")]
         output: PathBuf,
+        /// Directory to write per-generation checkpoint files.
+        #[arg(long)]
+        checkpoint_dir: Option<PathBuf>,
+        /// Write a checkpoint every N generations.
+        #[arg(long, default_value_t = 1)]
+        checkpoint_every: usize,
+    },
+    /// Resume a search from a checkpoint JSON.
+    Resume {
+        /// Path to a checkpoint file produced by search.
+        #[arg(short, long)]
+        checkpoint: PathBuf,
+        /// Additional generations to run.
+        #[arg(short, long, default_value_t = 10)]
+        generations: usize,
+        /// Output JSON path for the champion.
+        #[arg(short, long, default_value = "champion.json")]
+        output: PathBuf,
+        /// Directory to write per-generation checkpoint files.
+        #[arg(long)]
+        checkpoint_dir: Option<PathBuf>,
+        /// Write a checkpoint every N generations.
+        #[arg(long, default_value_t = 1)]
+        checkpoint_every: usize,
     },
     /// Evaluate a saved champion against a set of prompts.
     Eval {
@@ -101,6 +125,8 @@ fn main() -> Result<()> {
             tasks,
             controls,
             output,
+            checkpoint_dir,
+            checkpoint_every,
         } => {
             let mut search_config = match config {
                 Some(p) => load_search_config(&p)?,
@@ -108,6 +134,8 @@ fn main() -> Result<()> {
             };
             search_config.generations = generations;
             search_config.population_size = population;
+            search_config.checkpoint_dir = checkpoint_dir.map(|p| p.to_string_lossy().to_string());
+            search_config.checkpoint_every = checkpoint_every;
 
             let dims = ModelDims {
                 layers,
@@ -123,6 +151,45 @@ fn main() -> Result<()> {
             );
             let result = run_search(backend, search_config, seed, tasks, controls)
                 .context("search failed")?;
+
+            let json = serde_json::to_string_pretty(&result)
+                .context("failed to serialize search result")?;
+            validate_output_path(&output)?;
+            fs::write(&output, json).with_context(|| format!("writing {}", output.display()))?;
+            info!(
+                "champion fitness {} written to {}",
+                result.champion.fitness,
+                output.display()
+            );
+        }
+        Commands::Resume {
+            checkpoint,
+            generations,
+            output,
+            checkpoint_dir,
+            checkpoint_every,
+        } => {
+            let (search_config, checkpoint_data) = load_checkpoint(&checkpoint)?;
+            let mut search_config = search_config;
+            search_config.generations = generations;
+            search_config.checkpoint_dir = checkpoint_dir.map(|p| p.to_string_lossy().to_string());
+            search_config.checkpoint_every = checkpoint_every;
+
+            let dims = ModelDims {
+                layers: 6,
+                hidden_dim: 32,
+                mlp_dim: 64,
+                vocab_size: 128,
+            };
+            let seed = seed_from_path(&checkpoint);
+            let backend: Arc<dyn steer_core::Backend> = Arc::new(MockBackend::new(dims, seed));
+
+            info!(
+                "resuming search from generation {} for {} more generations",
+                checkpoint_data.generation, generations
+            );
+            let result = agent::resume_search(backend, search_config, checkpoint_data, seed)
+                .context("resume failed")?;
 
             let json = serde_json::to_string_pretty(&result)
                 .context("failed to serialize search result")?;
@@ -155,16 +222,9 @@ fn main() -> Result<()> {
                 Arc::new(MockBackend::new(dims, seed_from_path(&champion)));
 
             for line in prompt_text.lines().filter(|l| !l.trim().is_empty()) {
-                let response = agent::search::generate_response(
-                    backend.as_ref(),
-                    line,
-                    &candidate.interventions,
-                );
-                println!(
-                    "PROMPT: {line}
-RESPONSE: {response}
-"
-                );
+                let response =
+                    agent::generate_response(backend.as_ref(), line, &candidate.interventions);
+                println!("PROMPT: {line}\nRESPONSE: {response}\n");
             }
         }
     }
@@ -228,4 +288,12 @@ fn seed_from_path(path: &Path) -> u64 {
     let mut h = DefaultHasher::new();
     path.hash(&mut h);
     h.finish()
+}
+
+fn load_checkpoint(path: &Path) -> Result<(SearchConfig, Checkpoint)> {
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("reading checkpoint {}", path.display()))?;
+    let cp: Checkpoint = serde_json::from_str(&text)
+        .with_context(|| format!("parsing checkpoint {}", path.display()))?;
+    Ok((SearchConfig::default(), cp))
 }

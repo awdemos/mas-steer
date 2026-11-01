@@ -1,0 +1,17 @@
+# Sample MAS-Steer search configuration.
+# All fields are optional; missing values use the defaults shown below.
+
+generations = 15
+population_size = 30
+elite_count = 3
+tournament_size = 4
+mutation_rate = 0.7
+max_interventions = 5
+dose_range = [-3.0, 3.0]
+checkpoint_dir = "checkpoints"
+checkpoint_every = 2
+
+[fitness]
+lambda_str = 0.02
+lambda_ctrl = 0.6
+max_damage_budget = 0.2
