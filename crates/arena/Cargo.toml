@@ -1,0 +1,22 @@
+[package]
+name = "arena"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+steer-core = { path = "../steer-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rand = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+steer-core = { path = "../steer-core" }
+rand_chacha = { workspace = true }
