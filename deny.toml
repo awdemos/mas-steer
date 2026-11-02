@@ -8,9 +8,27 @@ feature-depth = 1
 
 [advisories]
 yanked = "warn"
+ignore = [
+    # paste is unmaintained but still pulled by candle-core/gemm; no safe upgrade available.
+    "RUSTSEC-2024-0436",
+    # fxhash is unmaintained; pulled by tokenizers ecosystem with no safe upgrade.
+    "RUSTSEC-2025-0057",
+]
 
 [licenses]
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-DFS-2016", "Unicode-3.0", "MPL-2.0"]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "Zlib",
+]
 
 [bans]
 multiple-versions = "warn"

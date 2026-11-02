@@ -10,9 +10,9 @@ rust-version.workspace = true
 workspace = true
 
 [features]
-default = ["mock"]
+default = ["model"]
 mock = []
-candle = ["dep:candle-core"]
+model = ["dep:candle-core", "dep:candle-transformers", "dep:candle-nn", "dep:tokenizers", "dep:hf-hub"]
 
 [dependencies]
 thiserror = { workspace = true }
@@ -22,6 +22,10 @@ rand = { workspace = true }
 rand_chacha = { workspace = true }
 tracing = { workspace = true }
 candle-core = { workspace = true, optional = true }
+candle-transformers = { workspace = true, optional = true }
+candle-nn = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }
+hf-hub = { workspace = true, optional = true, features = ["blocking"] }
 
 [dev-dependencies]
 proptest = { workspace = true }

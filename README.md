@@ -12,10 +12,10 @@ the winners as replayable JSON artifacts.
 
 | Crate | Responsibility |
 |-------|----------------|
-| `steer-core` | `Backend` trait, interventions, hooks, mock backend, optional Candle bridge |
+| `steer-core` | `Backend` trait, interventions, hooks, real Candle model loader, mock backend |
 | `arena` | Task families, challenger prompt generation, fitness scoring |
 | `agent` | Genetic search loop, population variation, parallel evaluation |
-| `mas-steer-cli` | Command-line interface (`mas-steer`) |
+| `mas-steer-cli` | Command-line interface (`mas_steer`) |
 
 ## Build
 
@@ -23,30 +23,48 @@ the winners as replayable JSON artifacts.
 cargo build --workspace --release
 ```
 
-The default build uses a fast mock backend. The optional Candle integration
-is disabled by default; enable it only when you are ready to wire in a real model. To enable the optional Candle
-integration, build with `--features candle` on `steer-core` and the CLI.
+The default build compiles the real Candle-backed model loader (Qwen2 family). A
+fast mock backend is available for tests and offline development by building with
+the `mock` feature:
+
+```bash
+cargo build --workspace --features mock
+```
+
+## Stage or download a model
+
+Use the CLI to pull a Qwen2-compatible checkpoint from Hugging Face Hub:
+
+```bash
+cargo run --bin mas_steer -- pull Qwen/Qwen2.5-0.5B --output-dir ./models
+```
+
+Or point the tool at any local directory containing `config.json`,
+`model.safetensors`, and `tokenizer.json`.
 
 ## Run a search
 
 ```bash
 cargo run --bin mas_steer -- search \
-  --layers 6 --hidden-dim 32 --mlp-dim 64 --vocab-size 128 \
+  --model ./models/Qwen--Qwen2.5-0.5B \
   --generations 10 --population 20 \
   --checkpoint-dir checkpoints \
   --output champion.json
 ```
 
-Use a config file to set search hyperparameters and the optional damage budget:
+Use a config file to set search hyperparameters and the damage budget:
 
 ```bash
-cargo run --bin mas_steer -- search --config examples/config.toml
+cargo run --bin mas_steer -- search \
+  --model ./models/Qwen--Qwen2.5-0.5B \
+  --config examples/config.toml
 ```
 
 ## Resume a search
 
 ```bash
 cargo run --bin mas_steer -- resume \
+  --model ./models/Qwen--Qwen2.5-0.5B \
   --checkpoint checkpoints/checkpoint-0008.json \
   --generations 10 --output champion.json
 ```
@@ -55,7 +73,17 @@ cargo run --bin mas_steer -- resume \
 
 ```bash
 cargo run --bin mas_steer -- eval \
+  --model ./models/Qwen--Qwen2.5-0.5B \
   --champion champion.json --prompts prompts.txt
+```
+
+## Mock-only smoke test
+
+For CI or machines without a model checkpoint, use the mock backend:
+
+```bash
+cargo run --bin mas_steer --features mock -- search \
+  --model mock --generations 3 --population 6
 ```
 
 ## Verification gates

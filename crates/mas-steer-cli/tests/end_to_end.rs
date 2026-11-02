@@ -19,14 +19,8 @@ What is the capital of Japan?
     let search = Command::new(env!("CARGO_BIN_EXE_mas_steer"))
         .args([
             "search",
-            "--layers",
-            "4",
-            "--hidden-dim",
-            "16",
-            "--mlp-dim",
-            "32",
-            "--vocab-size",
-            "64",
+            "--model",
+            "mock",
             "--generations",
             "3",
             "--population",
@@ -56,18 +50,12 @@ What is the capital of Japan?
     let eval = Command::new(env!("CARGO_BIN_EXE_mas_steer"))
         .args([
             "eval",
+            "--model",
+            "mock",
             "--champion",
             champion.to_str().unwrap(),
             "--prompts",
             prompts.to_str().unwrap(),
-            "--layers",
-            "4",
-            "--hidden-dim",
-            "16",
-            "--mlp-dim",
-            "32",
-            "--vocab-size",
-            "64",
         ])
         .status()
         .expect("mas_steer eval failed");

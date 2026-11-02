@@ -7,14 +7,8 @@ fn cli_search_smoke() {
     let status = Command::new(env!("CARGO_BIN_EXE_mas_steer"))
         .args([
             "search",
-            "--layers",
-            "4",
-            "--hidden-dim",
-            "16",
-            "--mlp-dim",
-            "32",
-            "--vocab-size",
-            "64",
+            "--model",
+            "mock",
             "--generations",
             "3",
             "--population",

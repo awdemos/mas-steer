@@ -28,8 +28,12 @@ clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
 toml = "0.8"
 
-# optional ML backend (disabled by default to keep compile fast)
+# ML backend — used by steer-core model backends
 candle-core = "0.11"
+candle-transformers = "0.11"
+candle-nn = "0.11"
+tokenizers = "1.0.0-rc.3"
+hf-hub = "1.0"
 
 # dev
 proptest = "1.5"

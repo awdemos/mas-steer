@@ -9,7 +9,10 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use tracing::info;
 
-use agent::{run_search, Checkpoint, SearchConfig};
+use agent::{generate_response, resume_search, run_search, Checkpoint, SearchConfig};
+use steer_core::load_model;
+
+#[cfg(feature = "mock")]
 use steer_core::{MockBackend, ModelDims};
 
 const MAX_PROMPT_FILE_BYTES: u64 = 1_048_576;
@@ -25,20 +28,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Run a search against a mock or real backend.
+    /// Run a search against a real model backend.
     Search {
-        /// Number of transformer layers.
-        #[arg(long, default_value_t = 6)]
-        layers: usize,
-        /// Hidden dimension size.
-        #[arg(long, default_value_t = 32)]
-        hidden_dim: usize,
-        /// MLP intermediate dimension.
-        #[arg(long, default_value_t = 64)]
-        mlp_dim: usize,
-        /// Vocabulary size.
-        #[arg(long, default_value_t = 128)]
-        vocab_size: usize,
+        /// Model directory or Hugging Face repo ID (e.g. "Qwen/Qwen2.5-0.5B").
+        #[arg(short, long)]
+        model: String,
         /// Path to a TOML search-config file.
         #[arg(short, long)]
         config: Option<PathBuf>,
@@ -69,6 +63,9 @@ enum Commands {
     },
     /// Resume a search from a checkpoint JSON.
     Resume {
+        /// Model directory or Hugging Face repo ID.
+        #[arg(short, long)]
+        model: String,
         /// Path to a checkpoint file produced by search.
         #[arg(short, long)]
         checkpoint: PathBuf,
@@ -87,25 +84,40 @@ enum Commands {
     },
     /// Evaluate a saved champion against a set of prompts.
     Eval {
+        /// Model directory or Hugging Face repo ID.
+        #[arg(short, long)]
+        model: String,
         /// Path to the champion JSON file.
         #[arg(short, long)]
         champion: PathBuf,
         /// Path to a newline-separated prompt file.
         #[arg(short, long)]
         prompts: PathBuf,
-        /// Mock backend layers.
-        #[arg(long, default_value_t = 6)]
-        layers: usize,
-        /// Mock backend hidden dim.
-        #[arg(long, default_value_t = 32)]
-        hidden_dim: usize,
-        /// Mock backend MLP dim.
-        #[arg(long, default_value_t = 64)]
-        mlp_dim: usize,
-        /// Mock backend vocab size.
-        #[arg(long, default_value_t = 128)]
-        vocab_size: usize,
     },
+    /// Download a model from Hugging Face Hub to a local directory.
+    Pull {
+        /// Hugging Face repo ID.
+        repo_id: String,
+        /// Local directory to stage the model files.
+        #[arg(short, long, default_value = "./models")]
+        output_dir: PathBuf,
+    },
+}
+
+fn load_backend(model: &str) -> Result<Arc<dyn steer_core::Backend>> {
+    #[cfg(feature = "mock")]
+    if model == "mock" {
+        return Ok(Arc::new(MockBackend::new(
+            ModelDims {
+                layers: 6,
+                hidden_dim: 32,
+                mlp_dim: 64,
+                vocab_size: 128,
+            },
+            42,
+        )));
+    }
+    Ok(Arc::new(load_model(model)?))
 }
 
 fn main() -> Result<()> {
@@ -114,10 +126,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Search {
-            layers,
-            hidden_dim,
-            mlp_dim,
-            vocab_size,
+            model,
             config,
             generations,
             population,
@@ -137,13 +146,7 @@ fn main() -> Result<()> {
             search_config.checkpoint_dir = checkpoint_dir.map(|p| p.to_string_lossy().to_string());
             search_config.checkpoint_every = checkpoint_every;
 
-            let dims = ModelDims {
-                layers,
-                hidden_dim,
-                mlp_dim,
-                vocab_size,
-            };
-            let backend: Arc<dyn steer_core::Backend> = Arc::new(MockBackend::new(dims, seed));
+            let backend: Arc<dyn steer_core::Backend> = load_backend(&model)?;
 
             info!(
                 "starting search: {} generations, population {}",
@@ -152,83 +155,93 @@ fn main() -> Result<()> {
             let result = run_search(backend, search_config, seed, tasks, controls)
                 .context("search failed")?;
 
-            let json = serde_json::to_string_pretty(&result)
-                .context("failed to serialize search result")?;
-            validate_output_path(&output)?;
-            fs::write(&output, json).with_context(|| format!("writing {}", output.display()))?;
-            info!(
-                "champion fitness {} written to {}",
-                result.champion.fitness,
-                output.display()
-            );
+            write_result(&output, &result)?;
         }
         Commands::Resume {
+            model,
             checkpoint,
             generations,
             output,
             checkpoint_dir,
             checkpoint_every,
         } => {
-            let (search_config, checkpoint_data) = load_checkpoint(&checkpoint)?;
-            let mut search_config = search_config;
+            let (mut search_config, checkpoint_data) = load_checkpoint(&checkpoint)?;
             search_config.generations = generations;
             search_config.checkpoint_dir = checkpoint_dir.map(|p| p.to_string_lossy().to_string());
             search_config.checkpoint_every = checkpoint_every;
 
-            let dims = ModelDims {
-                layers: 6,
-                hidden_dim: 32,
-                mlp_dim: 64,
-                vocab_size: 128,
-            };
+            let backend: Arc<dyn steer_core::Backend> = load_backend(&model)?;
             let seed = seed_from_path(&checkpoint);
-            let backend: Arc<dyn steer_core::Backend> = Arc::new(MockBackend::new(dims, seed));
 
             info!(
                 "resuming search from generation {} for {} more generations",
                 checkpoint_data.generation, generations
             );
-            let result = agent::resume_search(backend, search_config, checkpoint_data, seed)
+            let result = resume_search(backend, search_config, checkpoint_data, seed)
                 .context("resume failed")?;
 
-            let json = serde_json::to_string_pretty(&result)
-                .context("failed to serialize search result")?;
-            validate_output_path(&output)?;
-            fs::write(&output, json).with_context(|| format!("writing {}", output.display()))?;
-            info!(
-                "champion fitness {} written to {}",
-                result.champion.fitness,
-                output.display()
-            );
+            write_result(&output, &result)?;
         }
         Commands::Eval {
+            model,
             champion,
             prompts,
-            layers,
-            hidden_dim,
-            mlp_dim,
-            vocab_size,
         } => {
             let candidate = load_champion(&champion)?;
             let prompt_text = read_limited_text(&prompts, MAX_PROMPT_FILE_BYTES)
                 .with_context(|| format!("reading prompts {}", prompts.display()))?;
-            let dims = ModelDims {
-                layers,
-                hidden_dim,
-                mlp_dim,
-                vocab_size,
-            };
-            let backend: Arc<dyn steer_core::Backend> =
-                Arc::new(MockBackend::new(dims, seed_from_path(&champion)));
+            let backend: Arc<dyn steer_core::Backend> = load_backend(&model)?;
 
             for line in prompt_text.lines().filter(|l| !l.trim().is_empty()) {
-                let response =
-                    agent::generate_response(backend.as_ref(), line, &candidate.interventions);
+                let response = generate_response(backend.as_ref(), line, &candidate.interventions);
                 println!("PROMPT: {line}\nRESPONSE: {response}\n");
             }
         }
+        Commands::Pull {
+            repo_id,
+            output_dir,
+        } => {
+            let client = hf_hub::HFClientSync::new().context("cannot create HF hub client")?;
+            let owner_name: Vec<&str> = repo_id.splitn(2, '/').collect();
+            let (owner, name) = if owner_name.len() == 2 {
+                (owner_name[0], owner_name[1])
+            } else {
+                ("", repo_id.as_str())
+            };
+            let repo = client.model(owner, name);
+            let dir = output_dir.join(repo_id.replace('/', "--"));
+            fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+            let paths = [
+                ("config.json", dir.join("config.json")),
+                ("model.safetensors", dir.join("model.safetensors")),
+                ("tokenizer.json", dir.join("tokenizer.json")),
+            ];
+            for (remote, local) in &paths {
+                let fetched = repo
+                    .download_file()
+                    .filename(remote.to_string())
+                    .send()
+                    .with_context(|| format!("fetching {remote} from {repo_id}"))?;
+                fs::copy(&fetched, local)
+                    .with_context(|| format!("copying to {}", local.display()))?;
+                info!("{} -> {}", remote, local.display());
+            }
+            println!("Model staged at {}", dir.display());
+        }
     }
 
+    Ok(())
+}
+
+fn write_result(output: &Path, result: &agent::SearchResult) -> Result<()> {
+    let json = serde_json::to_string_pretty(result).context("failed to serialize search result")?;
+    validate_output_path(output)?;
+    fs::write(output, json).with_context(|| format!("writing {}", output.display()))?;
+    info!(
+        "champion fitness {} written to {}",
+        result.champion.fitness,
+        output.display()
+    );
     Ok(())
 }
 
