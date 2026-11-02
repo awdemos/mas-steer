@@ -1,12 +1,20 @@
 # MAS-Steer
 
-Multi-Agent Search over neuron intervention spaces, with self-adversarial arenas.
+MAS-Steer is a Rust-based multi-agent search engine for steering interventions in frozen language models. Instead of fine-tuning a model, it discovers small, targeted edits to internal activations—such as residual-stream pushes or neuron-level adjustments—that shift behavior along a desired axis while a separate adversarial arena tries to break the edit.
+
+The system is built around a self-adversarial loop:
+
+1. **Generate tasks.** A challenger creates prompt families (sentiment, facts, refusals, tone, etc.).
+2. **Search interventions.** A genetic algorithm explores combinations of layer, site, mode, and strength.
+3. **Score with damage control.** Every candidate is graded on the target behavior *and* on how much it degrades control prompts, plus an optional KL-divergence-style damage budget.
+4. **Archive winners.** The best interventions are saved as replayable JSON artifacts.
 
 This repository implements the system described in the paper at
 [neuronengineering.dev/papers/mas-steer/](https://neuronengineering.dev/papers/mas-steer/).
-It is a Rust workspace that searches for steering interventions in frozen
-language models, evaluates them against evolving adversarial tasks, and archives
-the winners as replayable JSON artifacts.
+
+## Why this matters
+
+Mechanistic interpretability has shown that language models represent concepts as directions in their residual streams and as individual neurons in their MLP layers. Pushing these directions changes behavior without any gradient updates. MAS-Steer automates the discovery of such pushes across layers and sites, using adversarial selection to keep the model useful while steering it.
 
 ## Crates
 
@@ -91,7 +99,9 @@ cargo run --bin mas_steer --features mock -- search \
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features
-cargo test --workspace
+cargo test --workspace --all-features
+cargo audit
+cargo deny check
 ```
 
 ## Security
